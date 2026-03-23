@@ -105,7 +105,12 @@ jobs:
       - name: Build APK with Bubblewrap
         working-directory: twa-build
         run: |
-          yes | bubblewrap build --skipPwaValidation
+          # Создаем конфиг заранее, чтобы избежать интерактивных вопросов
+          mkdir -p ~/.bubblewrap
+          echo "{\"jdkPath\":\"${JAVA_HOME}\",\"androidSdkPath\":\"${ANDROID_HOME}\"}" > ~/.bubblewrap/config.json
+          
+          # Запускаем сборку
+          bubblewrap build --skipPwaValidation
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
