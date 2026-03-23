@@ -52,13 +52,23 @@ jobs:
         run: |
           mkdir twa-build && cd twa-build
           
-          # Очистка URL: убираем https:// и финальные слэши
-          CLEAN_URL=$(echo "${{ github.event.inputs.website_url }}" | sed -e 's|^[^/]*//||' -e 's|/.*$||')
+          # 1. Сверх-агрессивная очистка URL (оставляем только домен)
+          # Убираем протоколы, слэши и пробелы
+          RAW_URL="${{ github.event.inputs.website_url }}"
+          HOST=$(echo "$RAW_URL" | sed -e 's|^[^/]*//||' -e 's|/.*$||' | tr -d '[:space:]/')
+          echo "TARGET_HOST=$HOST"
           
-          cat > twa-manifest.json << MANIFEST
+          # 2. Очистка Package ID (Android не ест тире, только точки и подчеркивания)
+          RAW_ID="${{ github.event.inputs.project_id }}"
+          SAFE_ID=$(echo "$RAW_ID" | tr '-' '_' | tr -cd '[:alnum:].__')
+          PKG_ID="app.nativify.$SAFE_ID"
+          echo "TARGET_PKG_ID=$PKG_ID"
+          
+          # 3. Генерируем манифест через bash-переменные (чтобы избежать конфликтов синтаксиса)
+          cat > twa-manifest.json << EOF
           {
-            "packageId": "app.nativify.${{ github.event.inputs.project_id }}",
-            "host": "$CLEAN_URL",
+            "packageId": "$PKG_ID",
+            "host": "$HOST",
             "name": "${{ github.event.inputs.app_name }}",
             "launcherName": "${{ github.event.inputs.app_name }}",
             "display": "standalone",
@@ -82,8 +92,14 @@ jobs:
             "orientation": "default",
             "fingerprints": []
           }
-          MANIFEST
+          EOF
           
+          # Выводим манифест в лог, чтобы мы глазами увидели, нет ли там мусора
+          echo "--- DEBUG: FINAL MANIFEST CONTENT ---"
+          cat twa-manifest.json
+          echo "--- END DEBUG ---"
+          
+          # Генерируем ключ
           keytool -genkey -v \
             -keystore signing-key.jks \
             -keyalg RSA -keysize 2048 \
@@ -99,7 +115,8 @@ jobs:
           mkdir -p ~/.bubblewrap
           echo "{\"jdkPath\":\"${JAVA_HOME}\",\"androidSdkPath\":\"${ANDROID_HOME}\"}" > ~/.bubblewrap/config.json
           
-          # Инициализация и сборка
+          # Инициализируем и собираем. 
+          # Если упадет здесь — в логах выше будет распечатан манифест, присылай его.
           bubblewrap init --manifest twa-manifest.json --yes
           bubblewrap build --skipPwaValidation --yes
         env:
