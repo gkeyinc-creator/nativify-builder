@@ -51,6 +51,7 @@ jobs:
       - name: Create TWA project
         run: |
           mkdir twa-build && cd twa-build
+          # Генерируем манифест
           cat > twa-manifest.json << 'MANIFEST'
           {
             "packageId": "app.nativify.${{ github.event.inputs.project_id }}",
@@ -80,6 +81,7 @@ jobs:
           }
           MANIFEST
           
+          # Генерируем ключ
           keytool -genkey -v \
             -keystore signing-key.jks \
             -keyalg RSA -keysize 2048 \
@@ -92,16 +94,19 @@ jobs:
       - name: Build APK with Bubblewrap
         working-directory: twa-build
         run: |
+          # 1. Настраиваем конфиги путей
           mkdir -p ~/.bubblewrap
           echo "{\"jdkPath\":\"${JAVA_HOME}\",\"androidSdkPath\":\"${ANDROID_HOME}\"}" > ~/.bubblewrap/config.json
           
-          # Команда 'yes "" |' принудительно прожимает Enter на все вопросы
-          # Убрали 'update', идем сразу в 'build'
-          yes "" | bubblewrap build --skipPwaValidation --yes
+          # 2. ВАЖНО: Сначала инициализируем проект из манифеста. 
+          # Это создаст файлы проекта и снимет все вопросы сборщика.
+          bubblewrap init --manifest twa-manifest.json --yes
+          
+          # 3. Теперь запускаем саму сборку
+          bubblewrap build --skipPwaValidation --yes
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          # Пароли для ключей, чтобы он не спрашивал их
           BUBBLEWRAP_KEYSTORE_PASSWORD: nativify123
           BUBBLEWRAP_KEY_PASSWORD: nativify123
 
@@ -109,12 +114,20 @@ jobs:
         id: find_apk
         working-directory: twa-build
         run: |
-          APK_FILE=$(find . -name "*.apk" -type f | head -1)
+          # Ищем файл в папках, которые создает bubblewrap
+          APK_FILE=$(find . -name "*release-unsigned.apk" -type f | head -1)
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find . -name "*.apk" -type f | head -1)
+          fi
+          
           if [ -n "$APK_FILE" ]; then
             echo "apk_found=true" >> $GITHUB_OUTPUT
             echo "apk_path=$APK_FILE" >> $GITHUB_OUTPUT
+            echo "Найден файл: $APK_FILE"
           else
             echo "apk_found=false" >> $GITHUB_OUTPUT
+            echo "APK не найден!"
+            ls -R # Вывести список файлов для отладки, если не нашли
           fi
 
       - name: Callback - Success
@@ -141,5 +154,5 @@ jobs:
               \"build_id\": \"${{ github.event.inputs.build_id }}\",
               \"project_id\": \"${{ github.event.inputs.project_id }}\",
               \"status\": \"failed\",
-              \"error_message\": \"APK build failed - check logs for interactive prompts\"
+              \"error_message\": \"APK build failed - no output file found. Check logs for Bubblewrap issues.\"
             }"
