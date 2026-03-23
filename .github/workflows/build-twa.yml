@@ -94,22 +94,22 @@ jobs:
         run: |
           mkdir -p ~/.bubblewrap
           echo "{\"jdkPath\":\"${JAVA_HOME}\",\"androidSdkPath\":\"${ANDROID_HOME}\"}" > ~/.bubblewrap/config.json
-          # Сначала создаем структуру проекта из манифеста без вопросов
-          bubblewrap update --yes
-          # Теперь собираем APK, тоже без вопросов
-          bubblewrap build --skipPwaValidation --yes
+          
+          # Команда 'yes "" |' принудительно прожимает Enter на все вопросы
+          # Убрали 'update', идем сразу в 'build'
+          yes "" | bubblewrap build --skipPwaValidation --yes
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          # Пароли для ключей, чтобы он не спрашивал их
+          BUBBLEWRAP_KEYSTORE_PASSWORD: nativify123
+          BUBBLEWRAP_KEY_PASSWORD: nativify123
 
       - name: Find APK
         id: find_apk
         working-directory: twa-build
         run: |
-          APK_FILE=$(find . -name "*release-unsigned.apk" -type f | head -1)
-          if [ -z "$APK_FILE" ]; then
-            APK_FILE=$(find . -name "*.apk" -type f | head -1)
-          fi
+          APK_FILE=$(find . -name "*.apk" -type f | head -1)
           if [ -n "$APK_FILE" ]; then
             echo "apk_found=true" >> $GITHUB_OUTPUT
             echo "apk_path=$APK_FILE" >> $GITHUB_OUTPUT
@@ -141,5 +141,5 @@ jobs:
               \"build_id\": \"${{ github.event.inputs.build_id }}\",
               \"project_id\": \"${{ github.event.inputs.project_id }}\",
               \"status\": \"failed\",
-              \"error_message\": \"APK build failed - no output file found\"
+              \"error_message\": \"APK build failed - check logs for interactive prompts\"
             }"
