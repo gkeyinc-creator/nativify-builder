@@ -4,8 +4,7 @@
 # Place this file in your BUILD REPO at: .github/workflows/build-twa.yml
 #
 # Required repo secrets:
-#   BUILD_CALLBACK_SECRET - shared secret for callback auth
-#   CALLBACK_URL_BASE - base URL (e.g. https://xxx.supabase.co/functions/v1)
+#    BUILD_CALLBACK_SECRET - shared secret for callback auth
 # =============================================================================
 
 name: Build TWA APK
@@ -105,12 +104,12 @@ jobs:
       - name: Build APK with Bubblewrap
         working-directory: twa-build
         run: |
-          # Создаем конфиг заранее, чтобы избежать интерактивных вопросов
+          # Создаем конфиг заранее
           mkdir -p ~/.bubblewrap
           echo "{\"jdkPath\":\"${JAVA_HOME}\",\"androidSdkPath\":\"${ANDROID_HOME}\"}" > ~/.bubblewrap/config.json
           
-          # Запускаем сборку
-          bubblewrap build --skipPwaValidation
+          # Запускаем сборку с флагом --yes для пропуска всех вопросов
+          bubblewrap build --skipPwaValidation --yes
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
@@ -119,6 +118,7 @@ jobs:
         id: find_apk
         working-directory: twa-build
         run: |
+          # Ищем любой сгенерированный apk
           APK_FILE=$(find . -name "*.apk" -type f | head -1)
           if [ -n "$APK_FILE" ]; then
             echo "apk_found=true" >> $GITHUB_OUTPUT
