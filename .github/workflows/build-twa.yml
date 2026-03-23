@@ -56,11 +56,11 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Bubblewrap
-        run: npm install -g @nickvdp/nickvdp 2>/dev/null || npm install -g @nickvdp/nickvdp
+        run: npm install -g @bubblewrap/cli 2>/dev/null || npm install -g @bubblewrap/cli
         continue-on-error: true
 
       - name: Install Bubblewrap CLI
-        run: npm install -g @nickvdp/nickvdp
+        run: npm install -g @bubblewrap/cli
 
       - name: Create TWA project
         run: |
@@ -110,13 +110,13 @@ jobs:
         working-directory: twa-build
         run: |
           # Try bubblewrap build
-          npx @nickvdp/nickvdp build --skipPwaValidation 2>/dev/null || \
-          npx @nickvdp/nickvdp build 2>/dev/null || \
+          bubblewrap build --skipPwaValidation 2>/dev/null || \
+          bubblewrap build 2>/dev/null || \
           echo "Bubblewrap build attempted"
           
           # Alternatively, use the standard bubblewrap
           if [ ! -f app-release-unsigned.apk ]; then
-            npx @nickvdp/nickvdp build --skipPwaValidation || true
+            bubblewrap build --skipPwaValidation || true
           fi
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
