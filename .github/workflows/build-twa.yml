@@ -1,3 +1,13 @@
+# =============================================================================
+# GitHub Actions Workflow: TWA APK Builder via Bubblewrap
+# =============================================================================
+# Place this file in your BUILD REPO at: .github/workflows/build-twa.yml
+#
+# Required repo secrets:
+#   BUILD_CALLBACK_SECRET - shared secret for callback auth
+#   CALLBACK_URL_BASE - base URL (e.g. https://xxx.supabase.co/functions/v1)
+# =============================================================================
+
 name: Build TWA APK
 
 on:
@@ -13,142 +23,133 @@ on:
         required: true
       primary_color:
         required: true
-        default: '#000000'
+        default: "#000000"
       splash_color:
         required: true
-        default: '#FFFFFF'
+        default: "#FFFFFF"
+      status_bar_style:
+        required: true
+        default: "dark"
+      enable_notifications:
+        required: true
+        default: "false"
       callback_url:
         required: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-
+    timeout-minutes: 15
     steps:
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "20"
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: 17
+          distribution: "temurin"
+          java-version: "17"
 
-      - name: Setup Android
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
       - name: Install Bubblewrap
-        run: npm i -g @bubblewrap/cli
+        run: npm install -g @bubblewrap/cli
 
-      - name: Prepare Project
+      - name: Create TWA project
         run: |
-          mkdir twa
-          cd twa
+          mkdir twa-build && cd twa-build
 
-          echo "=== NORMALIZE DOMAIN ==="
-          RAW="${{ github.event.inputs.website_url }}"
-          RAW=$(echo "$RAW" | xargs)
-          RAW=${RAW#http://}
-          RAW=${RAW#https://}
-          RAW=${RAW%%/*}
-          RAW=${RAW%%:*}
-          HOST=$(echo "$RAW" | tr -cd '[:alnum:].-')
-          echo "HOST=$HOST"
-
-          echo "=== PACKAGE ==="
-          RAW_ID="${{ github.event.inputs.project_id }}"
-          SAFE_ID=$(echo "$RAW_ID" | tr '-' '_' | tr -cd '[:alnum:].')
-          PKG="app.nativify.$SAFE_ID"
-
-          cat > twa-manifest.json <<EOF
+          # Generate twa-manifest.json
+          cat > twa-manifest.json << 'MANIFEST'
           {
-            "packageId": "$PKG",
-            "startUrl": "https://$HOST",
-            "scope": "https://$HOST/",
+            "packageId": "app.nativify.${{ github.event.inputs.project_id }}",
+            "host": "${{ github.event.inputs.website_url }}",
             "name": "${{ github.event.inputs.app_name }}",
             "launcherName": "${{ github.event.inputs.app_name }}",
             "display": "standalone",
-            "displayOverride": ["standalone"],
             "themeColor": "${{ github.event.inputs.primary_color }}",
             "navigationColor": "${{ github.event.inputs.primary_color }}",
             "backgroundColor": "${{ github.event.inputs.splash_color }}",
-            "enableNotifications": false,
-            "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a7/React-icon.svg",
-            "maskableIconUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a7/React-icon.svg",
-            "orientation": "default",
+            "enableNotifications": ${{ github.event.inputs.enable_notifications }},
+            "startUrl": "/",
+            "iconUrl": "https://via.placeholder.com/512",
+            "maskableIconUrl": "https://via.placeholder.com/512",
+            "shortcuts": [],
+            "signingKey": {
+              "path": "./signing-key.jks",
+              "alias": "nativify"
+            },
             "appVersionCode": 1,
             "appVersionName": "1.0.0",
-            "shortcuts": [],
-            "fingerprints": [],
-            "signingKey": {
-              "path": "./key.jks",
-              "alias": "alias"
-            }
+            "splashScreenFadeOutDuration": 300,
+            "enableSiteSettingsShortcut": true,
+            "isChromeOSOnly": false,
+            "orientation": "default",
+            "fingerprints": []
           }
-          EOF
+          MANIFEST
 
-          echo "=== MANIFEST ==="
-          cat twa-manifest.json
-
+          # Generate debug keystore
           keytool -genkey -v \
-            -keystore key.jks \
-            -alias alias \
-            -storepass pass123 \
-            -keypass pass123 \
-            -keyalg RSA \
-            -keysize 2048 \
+            -keystore signing-key.jks \
+            -keyalg RSA -keysize 2048 \
             -validity 10000 \
-            -dname "CN=Build,O=Build,C=US"
+            -alias nativify \
+            -storepass nativify123 \
+            -keypass nativify123 \
+            -dname "CN=Nativify, OU=Build, O=Nativify, L=Unknown, ST=Unknown, C=US"
 
-      - name: Build APK
-        working-directory: twa
+      - name: Build APK with Bubblewrap
+        working-directory: twa-build
         run: |
+          # Создаем конфиг заранее, чтобы избежать интерактивных вопросов
           mkdir -p ~/.bubblewrap
-          echo "{\"jdkPath\":\"$JAVA_HOME\",\"androidSdkPath\":\"$ANDROID_HOME\"}" > ~/.bubblewrap/config.json
+          echo "{\"jdkPath\":\"${JAVA_HOME}\",\"androidSdkPath\":\"${ANDROID_HOME}\"}" > ~/.bubblewrap/config.json
 
-          bubblewrap init --manifest twa-manifest.json --skipPwaValidation --yes
-          bubblewrap build --skipPwaValidation --yes
+          # Запускаем сборку
+          bubblewrap build --skipPwaValidation
         env:
-          BUBBLEWRAP_KEYSTORE_PASSWORD: pass123
-          BUBBLEWRAP_KEY_PASSWORD: pass123
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
 
       - name: Find APK
-        id: find
-        working-directory: twa
+        id: find_apk
+        working-directory: twa-build
         run: |
-          APK=$(find . -name "*.apk" | head -1)
-          if [ -f "$APK" ]; then
-            echo "found=true" >> $GITHUB_OUTPUT
-            echo "path=$APK" >> $GITHUB_OUTPUT
+          APK_FILE=$(find . -name "*.apk" -type f | head -1)
+          if [ -n "$APK_FILE" ]; then
+            echo "apk_found=true" >> $GITHUB_OUTPUT
+            echo "apk_path=$APK_FILE" >> $GITHUB_OUTPUT
           else
-            echo "found=false" >> $GITHUB_OUTPUT
+            echo "apk_found=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Callback Success
-        if: steps.find.outputs.found == 'true'
+      - name: Callback - Success
+        if: steps.find_apk.outputs.apk_found == 'true'
         run: |
-          APK_BASE64=$(base64 -w 0 "twa/${{ steps.find.outputs.path }}")
+          APK_BASE64=$(base64 -w 0 "twa-build/${{ steps.find_apk.outputs.apk_path }}")
           curl -X POST "${{ github.event.inputs.callback_url }}" \
             -H "Content-Type: application/json" \
             -H "x-build-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
             -d "{
-              \"build_id\":\"${{ github.event.inputs.build_id }}\",
-              \"project_id\":\"${{ github.event.inputs.project_id }}\",
-              \"status\":\"success\",
-              \"apk_base64\":\"$APK_BASE64\"
+              \"build_id\": \"${{ github.event.inputs.build_id }}\",
+              \"project_id\": \"${{ github.event.inputs.project_id }}\",
+              \"status\": \"success\",
+              \"apk_base64\": \"$APK_BASE64\"
             }"
 
-      - name: Callback Fail
-        if: steps.find.outputs.found != 'true'
+      - name: Callback - Failure
+        if: steps.find_apk.outputs.apk_found != 'true'
         run: |
           curl -X POST "${{ github.event.inputs.callback_url }}" \
             -H "Content-Type: application/json" \
             -H "x-build-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
             -d "{
-              \"build_id\":\"${{ github.event.inputs.build_id }}\",
-              \"project_id\":\"${{ github.event.inputs.project_id }}\",
-              \"status\":\"failed\"
+              \"build_id\": \"${{ github.event.inputs.build_id }}\",
+              \"project_id\": \"${{ github.event.inputs.project_id }}\",
+              \"status\": \"failed\",
+              \"error_message\": \"APK build failed - no output file found\"
             }"
