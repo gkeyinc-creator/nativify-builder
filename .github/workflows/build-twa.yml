@@ -1,0 +1,162 @@
+# =============================================================================
+# GitHub Actions Workflow: TWA APK Builder via Bubblewrap
+# =============================================================================
+# Place this file in your BUILD REPO at: .github/workflows/build-twa.yml
+#
+# Required repo secrets:
+#   BUILD_CALLBACK_SECRET - shared secret for callback auth
+#   CALLBACK_URL_BASE - base URL (e.g. https://xxx.supabase.co/functions/v1)
+# =============================================================================
+
+name: Build TWA APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        required: true
+      project_id:
+        required: true
+      app_name:
+        required: true
+      website_url:
+        required: true
+      primary_color:
+        required: true
+        default: '#000000'
+      splash_color:
+        required: true
+        default: '#FFFFFF'
+      status_bar_style:
+        required: true
+        default: 'dark'
+      enable_notifications:
+        required: true
+        default: 'false'
+      callback_url:
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Bubblewrap
+        run: npm install -g @nickvdp/nickvdp 2>/dev/null || npm install -g @nickvdp/nickvdp
+        continue-on-error: true
+
+      - name: Install Bubblewrap CLI
+        run: npm install -g @nickvdp/nickvdp
+
+      - name: Create TWA project
+        run: |
+          mkdir twa-build && cd twa-build
+          
+          # Generate twa-manifest.json
+          cat > twa-manifest.json << 'MANIFEST'
+          {
+            "packageId": "app.nativify.${{ github.event.inputs.project_id }}",
+            "host": "${{ github.event.inputs.website_url }}",
+            "name": "${{ github.event.inputs.app_name }}",
+            "launcherName": "${{ github.event.inputs.app_name }}",
+            "display": "standalone",
+            "themeColor": "${{ github.event.inputs.primary_color }}",
+            "navigationColor": "${{ github.event.inputs.primary_color }}",
+            "backgroundColor": "${{ github.event.inputs.splash_color }}",
+            "enableNotifications": ${{ github.event.inputs.enable_notifications }},
+            "startUrl": "/",
+            "iconUrl": "https://via.placeholder.com/512",
+            "maskableIconUrl": "https://via.placeholder.com/512",
+            "shortcuts": [],
+            "signingKey": {
+              "path": "./signing-key.jks",
+              "alias": "nativify"
+            },
+            "appVersionCode": 1,
+            "appVersionName": "1.0.0",
+            "splashScreenFadeOutDuration": 300,
+            "enableSiteSettingsShortcut": true,
+            "isChromeOSOnly": false,
+            "orientation": "default",
+            "fingerprints": []
+          }
+          MANIFEST
+          
+          # Generate debug keystore
+          keytool -genkey -v \
+            -keystore signing-key.jks \
+            -keyalg RSA -keysize 2048 \
+            -validity 10000 \
+            -alias nativify \
+            -storepass nativify123 \
+            -keypass nativify123 \
+            -dname "CN=Nativify, OU=Build, O=Nativify, L=Unknown, ST=Unknown, C=US"
+
+      - name: Build APK with Bubblewrap
+        working-directory: twa-build
+        run: |
+          # Try bubblewrap build
+          npx @nickvdp/nickvdp build --skipPwaValidation 2>/dev/null || \
+          npx @nickvdp/nickvdp build 2>/dev/null || \
+          echo "Bubblewrap build attempted"
+          
+          # Alternatively, use the standard bubblewrap
+          if [ ! -f app-release-unsigned.apk ]; then
+            npx @nickvdp/nickvdp build --skipPwaValidation || true
+          fi
+        env:
+          JAVA_HOME: ${{ env.JAVA_HOME }}
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+
+      - name: Find APK
+        id: find_apk
+        working-directory: twa-build
+        run: |
+          APK_FILE=$(find . -name "*.apk" -type f | head -1)
+          if [ -n "$APK_FILE" ]; then
+            echo "apk_found=true" >> $GITHUB_OUTPUT
+            echo "apk_path=$APK_FILE" >> $GITHUB_OUTPUT
+          else
+            echo "apk_found=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Callback - Success
+        if: steps.find_apk.outputs.apk_found == 'true'
+        run: |
+          APK_BASE64=$(base64 -w 0 "twa-build/${{ steps.find_apk.outputs.apk_path }}")
+          curl -X POST "${{ github.event.inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -H "x-build-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
+            -d "{
+              \"build_id\": \"${{ github.event.inputs.build_id }}\",
+              \"project_id\": \"${{ github.event.inputs.project_id }}\",
+              \"status\": \"success\",
+              \"apk_base64\": \"$APK_BASE64\"
+            }"
+
+      - name: Callback - Failure
+        if: steps.find_apk.outputs.apk_found != 'true'
+        run: |
+          curl -X POST "${{ github.event.inputs.callback_url }}" \
+            -H "Content-Type: application/json" \
+            -H "x-build-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
+            -d "{
+              \"build_id\": \"${{ github.event.inputs.build_id }}\",
+              \"project_id\": \"${{ github.event.inputs.project_id }}\",
+              \"status\": \"failed\",
+              \"error_message\": \"APK build failed - no output file found\"
+            }"
