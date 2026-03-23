@@ -17,19 +17,13 @@ on:
       splash_color:
         required: true
         default: '#FFFFFF'
-      status_bar_style:
-        required: true
-        default: 'dark'
-      enable_notifications:
-        required: true
-        default: 'false'
       callback_url:
         required: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Setup Node
@@ -49,12 +43,12 @@ jobs:
       - name: Install Bubblewrap
         run: npm i -g @bubblewrap/cli
 
-      - name: Prepare TWA
+      - name: Prepare Project
         run: |
           mkdir twa
           cd twa
 
-          echo "=== NORMALIZE URL ==="
+          echo "=== NORMALIZE DOMAIN ==="
           RAW="${{ github.event.inputs.website_url }}"
           RAW=$(echo "$RAW" | xargs)
           RAW=${RAW#http://}
@@ -68,25 +62,25 @@ jobs:
           RAW_ID="${{ github.event.inputs.project_id }}"
           SAFE_ID=$(echo "$RAW_ID" | tr '-' '_' | tr -cd '[:alnum:].')
           PKG="app.nativify.$SAFE_ID"
-          echo "PKG=$PKG"
 
           cat > twa-manifest.json <<EOF
           {
             "packageId": "$PKG",
-            "host": "$HOST",
+            "startUrl": "https://$HOST",
+            "scope": "https://$HOST/",
             "name": "${{ github.event.inputs.app_name }}",
             "launcherName": "${{ github.event.inputs.app_name }}",
             "display": "standalone",
+            "displayOverride": ["standalone"],
             "themeColor": "${{ github.event.inputs.primary_color }}",
             "navigationColor": "${{ github.event.inputs.primary_color }}",
             "backgroundColor": "${{ github.event.inputs.splash_color }}",
             "enableNotifications": false,
-            "startUrl": "/",
             "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a7/React-icon.svg",
             "maskableIconUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a7/React-icon.svg",
+            "orientation": "default",
             "appVersionCode": 1,
             "appVersionName": "1.0.0",
-            "orientation": "default",
             "shortcuts": [],
             "fingerprints": [],
             "signingKey": {
@@ -96,6 +90,7 @@ jobs:
           }
           EOF
 
+          echo "=== MANIFEST ==="
           cat twa-manifest.json
 
           keytool -genkey -v \
