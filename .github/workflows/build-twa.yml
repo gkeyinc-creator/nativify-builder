@@ -32,53 +32,47 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: 20
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: temurin
+          java-version: 17
 
-      - name: Setup Android SDK
+      - name: Setup Android
         uses: android-actions/setup-android@v3
 
       - name: Install Bubblewrap
-        run: npm install -g @bubblewrap/cli
+        run: npm i -g @bubblewrap/cli
 
-      - name: Create TWA project
+      - name: Prepare TWA
         run: |
-          mkdir twa-build
-          cd twa-build
+          mkdir twa
+          cd twa
 
-          echo "===== URL NORMALIZATION ====="
+          echo "=== NORMALIZE URL ==="
+          RAW="${{ github.event.inputs.website_url }}"
+          RAW=$(echo "$RAW" | xargs)
+          RAW=${RAW#http://}
+          RAW=${RAW#https://}
+          RAW=${RAW%%/*}
+          RAW=${RAW%%:*}
+          HOST=$(echo "$RAW" | tr -cd '[:alnum:].-')
+          echo "HOST=$HOST"
 
-          RAW_URL="${{ github.event.inputs.website_url }}"
-          RAW_URL=$(echo "$RAW_URL" | xargs)
-
-          if [[ "$RAW_URL" != http* ]]; then
-            RAW_URL="https://$RAW_URL"
-          fi
-
-          HOST=$(node -e "console.log(new URL('$RAW_URL').host)")
-          echo "TARGET_HOST=$HOST"
-
-          echo "===== PACKAGE NORMALIZATION ====="
-
+          echo "=== PACKAGE ==="
           RAW_ID="${{ github.event.inputs.project_id }}"
-          SAFE_ID=$(echo "$RAW_ID" | tr '-' '_' | tr -cd '[:alnum:].__')
-          PKG_ID="app.nativify.$SAFE_ID"
-
-          echo "TARGET_PKG_ID=$PKG_ID"
-
-          echo "===== GENERATING MANIFEST ====="
+          SAFE_ID=$(echo "$RAW_ID" | tr '-' '_' | tr -cd '[:alnum:].')
+          PKG="app.nativify.$SAFE_ID"
+          echo "PKG=$PKG"
 
           cat > twa-manifest.json <<EOF
           {
-            "packageId": "$PKG_ID",
+            "packageId": "$PKG",
             "host": "$HOST",
             "name": "${{ github.event.inputs.app_name }}",
             "launcherName": "${{ github.event.inputs.app_name }}",
@@ -86,87 +80,80 @@ jobs:
             "themeColor": "${{ github.event.inputs.primary_color }}",
             "navigationColor": "${{ github.event.inputs.primary_color }}",
             "backgroundColor": "${{ github.event.inputs.splash_color }}",
-            "enableNotifications": ${{ github.event.inputs.enable_notifications }},
+            "enableNotifications": false,
             "startUrl": "/",
             "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a7/React-icon.svg",
             "maskableIconUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a7/React-icon.svg",
-            "shortcuts": [],
-            "signingKey": {
-              "path": "./signing-key.jks",
-              "alias": "nativify"
-            },
             "appVersionCode": 1,
             "appVersionName": "1.0.0",
-            "splashScreenFadeOutDuration": 300,
-            "enableSiteSettingsShortcut": true,
-            "isChromeOSOnly": false,
             "orientation": "default",
-            "fingerprints": []
+            "shortcuts": [],
+            "fingerprints": [],
+            "signingKey": {
+              "path": "./key.jks",
+              "alias": "alias"
+            }
           }
           EOF
 
-          echo "===== DEBUG MANIFEST ====="
           cat twa-manifest.json
-          echo "=========================="
-
-          echo "===== GENERATING KEY ====="
 
           keytool -genkey -v \
-            -keystore signing-key.jks \
-            -keyalg RSA -keysize 2048 \
+            -keystore key.jks \
+            -alias alias \
+            -storepass pass123 \
+            -keypass pass123 \
+            -keyalg RSA \
+            -keysize 2048 \
             -validity 10000 \
-            -alias nativify \
-            -storepass nativify123 \
-            -keypass nativify123 \
-            -dname "CN=Nativify, OU=Build, O=Nativify, L=Unknown, ST=Unknown, C=US"
+            -dname "CN=Build,O=Build,C=US"
 
-      - name: Build APK with Bubblewrap
-        working-directory: twa-build
+      - name: Build APK
+        working-directory: twa
         run: |
           mkdir -p ~/.bubblewrap
           echo "{\"jdkPath\":\"$JAVA_HOME\",\"androidSdkPath\":\"$ANDROID_HOME\"}" > ~/.bubblewrap/config.json
 
-          bubblewrap init --manifest twa-manifest.json --yes
+          bubblewrap init --manifest twa-manifest.json --skipPwaValidation --yes
           bubblewrap build --skipPwaValidation --yes
         env:
-          BUBBLEWRAP_KEYSTORE_PASSWORD: nativify123
-          BUBBLEWRAP_KEY_PASSWORD: nativify123
+          BUBBLEWRAP_KEYSTORE_PASSWORD: pass123
+          BUBBLEWRAP_KEY_PASSWORD: pass123
 
       - name: Find APK
-        id: find_apk
-        working-directory: twa-build
+        id: find
+        working-directory: twa
         run: |
-          APK_FILE=$(find . -name "*.apk" -type f | head -1)
-          if [ -n "$APK_FILE" ]; then
-            echo "apk_found=true" >> $GITHUB_OUTPUT
-            echo "apk_path=$APK_FILE" >> $GITHUB_OUTPUT
+          APK=$(find . -name "*.apk" | head -1)
+          if [ -f "$APK" ]; then
+            echo "found=true" >> $GITHUB_OUTPUT
+            echo "path=$APK" >> $GITHUB_OUTPUT
           else
-            echo "apk_found=false" >> $GITHUB_OUTPUT
+            echo "found=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Callback - Success
-        if: steps.find_apk.outputs.apk_found == 'true'
+      - name: Callback Success
+        if: steps.find.outputs.found == 'true'
         run: |
-          APK_BASE64=$(base64 -w 0 "twa-build/${{ steps.find_apk.outputs.apk_path }}")
+          APK_BASE64=$(base64 -w 0 "twa/${{ steps.find.outputs.path }}")
           curl -X POST "${{ github.event.inputs.callback_url }}" \
             -H "Content-Type: application/json" \
             -H "x-build-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
             -d "{
-              \"build_id\": \"${{ github.event.inputs.build_id }}\",
-              \"project_id\": \"${{ github.event.inputs.project_id }}\",
-              \"status\": \"success\",
-              \"apk_base64\": \"$APK_BASE64\"
+              \"build_id\":\"${{ github.event.inputs.build_id }}\",
+              \"project_id\":\"${{ github.event.inputs.project_id }}\",
+              \"status\":\"success\",
+              \"apk_base64\":\"$APK_BASE64\"
             }"
 
-      - name: Callback - Failure
-        if: steps.find_apk.outputs.apk_found != 'true'
+      - name: Callback Fail
+        if: steps.find.outputs.found != 'true'
         run: |
           curl -X POST "${{ github.event.inputs.callback_url }}" \
             -H "Content-Type: application/json" \
             -H "x-build-secret: ${{ secrets.BUILD_CALLBACK_SECRET }}" \
             -d "{
-              \"build_id\": \"${{ github.event.inputs.build_id }}\",
-              \"project_id\": \"${{ github.event.inputs.project_id }}\",
-              \"status\": \"failed\",
-              \"error_message\": \"Build failed at APK generation step.\"
+              \"build_id\":\"${{ github.event.inputs.build_id }}\",
+              \"project_id\":\"${{ github.event.inputs.project_id }}\",
+              \"status\":\"failed\"
             }"
