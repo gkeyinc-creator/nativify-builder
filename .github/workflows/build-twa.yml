@@ -1,12 +1,3 @@
-# =============================================================================
-# GitHub Actions Workflow: TWA APK Builder via Bubblewrap
-# =============================================================================
-# Place this file in your BUILD REPO at: .github/workflows/build-twa.yml
-#
-# Required repo secrets:
-#    BUILD_CALLBACK_SECRET - shared secret for callback auth
-# =============================================================================
-
 name: Build TWA APK
 
 on:
@@ -60,8 +51,6 @@ jobs:
       - name: Create TWA project
         run: |
           mkdir twa-build && cd twa-build
-          
-          # Generate twa-manifest.json
           cat > twa-manifest.json << 'MANIFEST'
           {
             "packageId": "app.nativify.${{ github.event.inputs.project_id }}",
@@ -91,7 +80,6 @@ jobs:
           }
           MANIFEST
           
-          # Generate debug keystore
           keytool -genkey -v \
             -keystore signing-key.jks \
             -keyalg RSA -keysize 2048 \
@@ -104,11 +92,11 @@ jobs:
       - name: Build APK with Bubblewrap
         working-directory: twa-build
         run: |
-          # Создаем конфиг заранее
           mkdir -p ~/.bubblewrap
           echo "{\"jdkPath\":\"${JAVA_HOME}\",\"androidSdkPath\":\"${ANDROID_HOME}\"}" > ~/.bubblewrap/config.json
-          
-          # Запускаем сборку с флагом --yes для пропуска всех вопросов
+          # Сначала создаем структуру проекта из манифеста без вопросов
+          bubblewrap update --yes
+          # Теперь собираем APK, тоже без вопросов
           bubblewrap build --skipPwaValidation --yes
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
@@ -118,8 +106,10 @@ jobs:
         id: find_apk
         working-directory: twa-build
         run: |
-          # Ищем любой сгенерированный apk
-          APK_FILE=$(find . -name "*.apk" -type f | head -1)
+          APK_FILE=$(find . -name "*release-unsigned.apk" -type f | head -1)
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find . -name "*.apk" -type f | head -1)
+          fi
           if [ -n "$APK_FILE" ]; then
             echo "apk_found=true" >> $GITHUB_OUTPUT
             echo "apk_path=$APK_FILE" >> $GITHUB_OUTPUT
