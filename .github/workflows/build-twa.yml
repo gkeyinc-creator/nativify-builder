@@ -29,7 +29,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+
     steps:
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -50,22 +51,32 @@ jobs:
 
       - name: Create TWA project
         run: |
-          mkdir twa-build && cd twa-build
-          
-          # 1. Сверх-агрессивная очистка URL (оставляем только домен)
-          # Убираем протоколы, слэши и пробелы
+          mkdir twa-build
+          cd twa-build
+
+          echo "===== URL NORMALIZATION ====="
+
           RAW_URL="${{ github.event.inputs.website_url }}"
-          HOST=$(echo "$RAW_URL" | sed -e 's|^[^/]*//||' -e 's|/.*$||' | tr -d '[:space:]/')
+          RAW_URL=$(echo "$RAW_URL" | xargs)
+
+          if [[ "$RAW_URL" != http* ]]; then
+            RAW_URL="https://$RAW_URL"
+          fi
+
+          HOST=$(node -e "console.log(new URL('$RAW_URL').host)")
           echo "TARGET_HOST=$HOST"
-          
-          # 2. Очистка Package ID (Android не ест тире, только точки и подчеркивания)
+
+          echo "===== PACKAGE NORMALIZATION ====="
+
           RAW_ID="${{ github.event.inputs.project_id }}"
           SAFE_ID=$(echo "$RAW_ID" | tr '-' '_' | tr -cd '[:alnum:].__')
           PKG_ID="app.nativify.$SAFE_ID"
+
           echo "TARGET_PKG_ID=$PKG_ID"
-          
-          # 3. Генерируем манифест через bash-переменные (чтобы избежать конфликтов синтаксиса)
-          cat > twa-manifest.json << EOF
+
+          echo "===== GENERATING MANIFEST ====="
+
+          cat > twa-manifest.json <<EOF
           {
             "packageId": "$PKG_ID",
             "host": "$HOST",
@@ -77,8 +88,8 @@ jobs:
             "backgroundColor": "${{ github.event.inputs.splash_color }}",
             "enableNotifications": ${{ github.event.inputs.enable_notifications }},
             "startUrl": "/",
-            "iconUrl": "https://via.placeholder.com/512",
-            "maskableIconUrl": "https://via.placeholder.com/512",
+            "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a7/React-icon.svg",
+            "maskableIconUrl": "https://upload.wikimedia.org/wikipedia/commons/a/a7/React-icon.svg",
             "shortcuts": [],
             "signingKey": {
               "path": "./signing-key.jks",
@@ -93,13 +104,13 @@ jobs:
             "fingerprints": []
           }
           EOF
-          
-          # Выводим манифест в лог, чтобы мы глазами увидели, нет ли там мусора
-          echo "--- DEBUG: FINAL MANIFEST CONTENT ---"
+
+          echo "===== DEBUG MANIFEST ====="
           cat twa-manifest.json
-          echo "--- END DEBUG ---"
-          
-          # Генерируем ключ
+          echo "=========================="
+
+          echo "===== GENERATING KEY ====="
+
           keytool -genkey -v \
             -keystore signing-key.jks \
             -keyalg RSA -keysize 2048 \
@@ -113,15 +124,11 @@ jobs:
         working-directory: twa-build
         run: |
           mkdir -p ~/.bubblewrap
-          echo "{\"jdkPath\":\"${JAVA_HOME}\",\"androidSdkPath\":\"${ANDROID_HOME}\"}" > ~/.bubblewrap/config.json
-          
-          # Инициализируем и собираем. 
-          # Если упадет здесь — в логах выше будет распечатан манифест, присылай его.
+          echo "{\"jdkPath\":\"$JAVA_HOME\",\"androidSdkPath\":\"$ANDROID_HOME\"}" > ~/.bubblewrap/config.json
+
           bubblewrap init --manifest twa-manifest.json --yes
           bubblewrap build --skipPwaValidation --yes
         env:
-          JAVA_HOME: ${{ env.JAVA_HOME }}
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
           BUBBLEWRAP_KEYSTORE_PASSWORD: nativify123
           BUBBLEWRAP_KEY_PASSWORD: nativify123
 
